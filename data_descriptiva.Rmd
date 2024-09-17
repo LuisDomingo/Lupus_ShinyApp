@@ -1,0 +1,316 @@
+---
+title: "Untitled"
+author: "Ángela Montaño"
+output: html_document
+date: "2024-08-05"
+---
+
+## Librerías empleadas
+
+```{r, include=FALSE}
+library(readr) #leerdatabase
+library(visdat) #datos.faltantes
+library(dplyr) #pipe mutate
+library(plotly) #filter
+library(wordcloud2)
+library(tidyr)
+```
+
+## Carga de base de datos
+
+```{r}
+base_original = readr::read_csv("base.de.datos.sin.registros.duplicados_16_septiembre_2024.csv", show_col_types = FALSE) 
+
+base_original = base_original %>% 
+  mutate(ID = row_number())
+```
+
+## Curación de base de datos
+
+```{r}
+db_descriptiva = data.frame("ID" = base_original$ID, "Sexo.femenino" = base_original$sex___1, "Sexo.masculino" = base_original$sex___2, "Edad" = base_original$calculated_age, "Grupo.edad" = base_original$age_group, "Lugar.nacimiento" = base_original$place_of_birth, "Nivel.Socioeconómico" = base_original$socioeconomic_status, "Lupus" = base_original$lupus)
+
+db_ambos = db_descriptiva %>% 
+  mutate(Sexo = case_when( # como un ifelse pero mejor 
+    Sexo.masculino == 1 ~ "Hombre", # si sexmasc es igual a 1 cambia el valor a "Hombre"
+    Sexo.femenino == 1 ~ "Mujer", # lo mismo pero para "Mujer"
+    TRUE ~ NA_character_  # Maneja los casos donde la respuesta sea 0 o NA (Si hay un caso que no quede en ninguna condición, asigna NA (para carácteres) pq despues eliminamos todos los NA
+  )) %>% 
+  select(-Sexo.masculino & -Sexo.femenino) %>% # borra las columnas previas ya q juntamos las respuestas en una sola columna ahora y está más fácil
+  mutate(Edad = ifelse(Edad > 100 | Edad < 1, NA, Edad)) %>% # cambia las edades imposibles a NA
+    filter(complete.cases(.)) %>% 
+  select("ID", "Sexo", "Edad", "Grupo.edad", "Lugar.nacimiento", "Nivel.Socioeconómico", "Lupus") %>% 
+  mutate(Lugar.nacimiento = recode(Lugar.nacimiento,
+                                   '1' = "AG",
+                                   '2' = "BC",
+                                   '3' = "BCS",
+                                   '4' = "CMP",
+                                   '5' = "CHP",
+                                   '6' = "CHIH", 
+                                   '7' = "CDMX", 
+                                   '8' = "COAH",
+                                   '9' = "COL",
+                                   '10' = "DUR",
+                                   '11' = "EDOMEX",
+                                   '12' = "GTO",
+                                   '13' = "GUE",
+                                   '14' = "HID",
+                                   '15' = "JAL",
+                                   '16' = "MICH",
+                                   '17' = "MOR",
+                                   '18' = "NAY",
+                                   '19' = "NL",
+                                   'Ciudad de México' = "CDMX",
+                                   '20' = "OAX",
+                                   '21' = "PUE",
+                                   '22' = "QRO",
+                                   '23' = "QROO",
+                                   '24' = "SLP",
+                                   '25' = "SIN",
+                                   '26' = "SON",
+                                   '27' = "TAB",
+                                   '28' = "TAM",
+                                   '29' = "TLAX",
+                                   '30' = "VERA",
+                                   '31' = "YUC",
+                                   '32' = "ZAC"
+  ))
+
+print(db_ambos)
+```
+
+## Pie charts de géneros por estado
+
+```{r muestras_estado_sexo_lupus}
+db_fem = db_ambos %>% 
+  filter(Sexo == "Mujer" & Lupus == 1) %>% # solo datos de personas c/lupus - Shiny permitirá elegir entre 1 o 2.
+  group_by_at("Lugar.nacimiento") %>%
+  summarise(count = n(),
+            promedio_edad = mean(Edad)) %>%
+  mutate(per = round(100 * count / sum(count), 1)) # summarise solo deja las columnas creadas con n() y count()
+
+x = ggplot(db_fem, aes(x = "", y = per, fill = Lugar.nacimiento)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar("y", start = 0) +
+    theme_void()
+
+print(x)
+
+db_masc = db_ambos %>% 
+  filter(Sexo == "Hombre" & Lupus == 1) %>% 
+  group_by_at("Lugar.nacimiento") %>%
+  summarise(count = n(),
+            promedio_edad = mean(Edad)) %>% 
+  mutate(per = round(100 * count /sum(count), 1))# summarise solo deja las columnas creadas con n() y count()
+
+y = ggplot(db_masc, aes(x = "", y = per, fill = Lugar.nacimiento)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar("y", start = 0) +
+    theme_void()
+
+print(y)
+```
+
+## Circular chart de sexo y lugar de nacimiento
+
+```{r circularchart, warning=FALSE}
+
+# Combine data for men and women with respective labels
+circularchart_hombre <- db_masc %>%
+  mutate(Lugar_nacimiento = paste0(Lugar.nacimiento, ".hombre")) %>%
+  select(Lugar_nacimiento, count)
+
+circularchart_mujer <- db_fem %>%
+  mutate(Lugar_nacimiento = paste0(Lugar.nacimiento, ".mujer")) %>%
+  select(Lugar_nacimiento, count)
+
+# Combine the dataframes and order them
+circularchart <- rbind(circularchart_hombre, circularchart_mujer) %>%
+  arrange(Lugar_nacimiento)
+
+# Define empty bars
+empty_bar <- 1
+
+# Create empty rows for each group
+unique_states <- unique(gsub("\\..*", "", circularchart$Lugar_nacimiento))
+to_add <- data.frame(matrix(NA, empty_bar * length(unique_states), ncol(circularchart)))
+colnames(to_add) <- colnames(circularchart)
+
+# Repeat each state and add empty bars
+to_add$Lugar_nacimiento <- rep(unique_states, each = empty_bar)
+
+# Combine with the original data
+data <- rbind(circularchart, to_add)
+data <- data[order(data$Lugar_nacimiento), ]
+data$id <- seq(1, nrow(data))
+
+# Define color mapping
+data$color <- ifelse(grepl("mujer", data$Lugar_nacimiento), "pink", "blue")
+
+# Calculate angle and hjust
+label_data <- data
+number_of_bar <- nrow(label_data)
+angle <- 90 - 360 * (label_data$id-0.5) / number_of_bar
+label_data$hjust <- ifelse(angle < -90, 1, 0)
+label_data$angle <- ifelse(angle < -90, angle + 180, angle)
+
+# Plot the circular bar chart with color differentiation
+p <- ggplot(data, aes(x = as.factor(id), y = count, fill = color)) +
+  geom_bar(stat = "identity", width = 1, alpha = 0.7) +  
+  scale_fill_identity() +  # Use the colors defined in the 'color' column
+  ylim(-70, 80) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(-1, 4), "cm")
+  ) +
+  coord_polar(start = 0) +
+  geom_text(data = label_data, aes(x = id, y = count + 10, label = Lugar_nacimiento, hjust = hjust), color = "black", fontface = "bold", alpha = 0.6, size = 2.5, angle = label_data$angle, inherit.aes = FALSE)
+
+print(p)
+```
+
+## Estado socioeconómico
+
+```{r}
+# Todavìa no terminado, evaluaciòn de estado socioeconòmico.
+db_sec = db_ambos %>% 
+  select(ID, Sexo, Edad, Nivel.Socioeconómico, Lupus)
+
+ggplot(db_sec, aes(x = Nivel.Socioeconómico)) +
+  geom_histogram()
+```
+
+```{r}
+# No terminado - evaluaciòn lupus en familiares
+start = match("family_member_sle___0", names(base_original)) 
+end = match("family_member_sle___8", names(base_original)) 
+include = c("ID", "family_sle", "lupus", names(base_original)[start:end])
+
+db_fam = base_original %>%
+  select(all_of(include)) %>%
+  filter(complete.cases(.)) %>%
+  filter(lupus == 1) %>% 
+  mutate(Familiar = case_when(
+    family_member_sle___0 == 1 ~ "Papá",
+    family_member_sle___1 == 1 ~ "Mamá",
+    family_member_sle___2 == 1 ~ "Herman@",
+    family_member_sle___3 == 1 ~ "Abuel@",
+    family_member_sle___4 == 1 ~ "Ti@",
+    family_member_sle___5 == 1 ~ "Prim@",
+    family_member_sle___6 == 1 ~ "Sobrin@",
+    family_member_sle___7 == 1 ~ "Hij@",
+    family_member_sle___8 == 1 ~ "Otro",
+    TRUE ~ "Nadie" # Assign "Nadie" if no column equals 1
+  )) %>%
+  select("ID", "family_sle", "Familiar", "lupus")
+
+dist = barplot(table(db_fam$family_sle), col = c("#a1e9f0", "#b9e38d"), main= "Presencia de Lupus", names.arg = c("No", "Sí")) # Usamos solo family_sle pq no está filtrado con lupus == 1
+
+fam.count = db_fam %>% 
+  group_by(Familiar) %>%
+  summarise(count = n()) %>% 
+  arrange(desc(count))
+
+ggplot(fam.count, aes(x = reorder(Familiar, -count), y = count)) + 
+  geom_bar(stat = "identity")  +
+  labs(title = "Counts for Each Family Member Category", x = "Family Member Category", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+\
+
+```{r}
+#names(base_original)
+include.sld <- c("ID", "calculated_age","place_of_birth", "lupus",  "sledai_points___conciencia", grep("^sledai_points___([1-9]|1[0-9]|2[0-5])$", names(base_original), value = TRUE))
+
+sledai_mapping <- c(
+  "sledai_points___1" = "Convulsiones",
+  "sledai_points___2" = "Psicosis",
+  "sledai_points___3" = "Síndrome Cerebro Orgánico",
+  "sledai_points___conciencia" = "Atención",
+  "sledai_points___4" = "Alteración visual",
+  "sledai_points___5" = "Alteración nervios craniales",
+  "sledai_points___6" = "Cefálea Lúpica",
+  "sledai_points___7" = "Accidente cerebral vascular",
+  "sledai_points___8" = "Vasculitis",
+  "sledai_points___9" = "Artritis",
+  "sledai_points___10" = "Miositis",
+  "sledai_points___11" = "Cilindros urinarios",
+  "sledai_points___12" = "Hematuria",
+  "sledai_points___13" = "Proteinuria",
+  "sledai_points___14" = "Piuria",
+  "sledai_points___15" = "Erupción",
+  "sledai_points___16" = "Alopecia",
+  "sledai_points___17" = "Úlcera mucosa",
+  "sledai_points___18" = "Pleuresia",
+  "sledai_points___19" = "Pericarditis",
+  "sledai_points___20" = "Hipocomplementación",
+  "sledai_points___21" = "Aumento unión ADN",
+  "sledai_points___22" = "Fiebre",
+  "sledai_points___23" = "Trombocitopenia",
+  "sledai_points___24" = "Leucopenia",
+  "sledai_points___25" = "Ninguno"
+)
+
+db_sledai = base_original %>%
+  select(all_of(include.sld)) %>%
+  filter(complete.cases(.)) %>% 
+  mutate(place_of_birth = recode(place_of_birth,
+                                   '1' = "AG",
+                                   '2' = "BC",
+                                   '3' = "BCS",
+                                   '4' = "CMP",
+                                   '5' = "CHP",
+                                   '6' = "CHIH", 
+                                   '7' = "CDMX", 
+                                   '8' = "COAH",
+                                   '9' = "COL",
+                                   '10' = "DUR",
+                                   '11' = "EDOMEX",
+                                   '12' = "GTO",
+                                   '13' = "GUE",
+                                   '14' = "HID",
+                                   '15' = "JAL",
+                                   '16' = "MICH",
+                                   '17' = "MOR",
+                                   '18' = "NAY",
+                                   '19' = "NL",
+                                   'Ciudad de México' = "CDMX",
+                                   '20' = "OAX",
+                                   '21' = "PUE",
+                                   '22' = "QRO",
+                                   '23' = "QROO",
+                                   '24' = "SLP",
+                                   '25' = "SIN",
+                                   '26' = "SON",
+                                   '27' = "TAB",
+                                   '28' = "TAM",
+                                   '29' = "TLAX",
+                                   '30' = "VERA",
+                                   '31' = "YUC",
+                                   '32' = "ZAC"
+)) %>% 
+    mutate(across(all_of(include.sld[5:30]), 
+                ~ ifelse(. == 1, sledai_mapping[cur_column()], "NA")))
+
+print(db_sledai)
+
+# Use mutate with across to apply the mapping
+db_sledai = base_original %>%
+  select(all_of(include.sld)) %>%
+  filter(complete.cases(.)) %>% 
+  filter(lupus == 1) %>%
+  #filter(calculated_age == 40) %>% 
+  mutate(across(all_of(include.sld[5:30]), 
+                ~ ifelse(. == 1, sledai_mapping[cur_column()], "NA"))) %>% 
+  pivot_longer(cols = all_of(include.sld[5:30]), names_to = "variable", values_to = "word") %>%   filter(word != "NA") %>% 
+  group_by(word) %>% 
+  summarise(count = n())
+
+wordcloud2(db_sledai, size = 0.5)
+
+```

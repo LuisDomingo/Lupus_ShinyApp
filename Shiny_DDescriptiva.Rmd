@@ -1,0 +1,267 @@
+---
+title: "Shiny_DDescriptiva"
+author: "Ángela Montaño"
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M')`"
+
+output:                                   
+  html_document:   
+    collapsed: true
+    code_folding: hide             # Mostrar el código
+    toc: true                      # Mostrar la tabla de contenidos
+    toc_depth: 3
+    toc_float: true                # Índices o contenidos flotantes 
+    smooth_scroll: true            # Activar el scroll
+    highlight: tango                # Destacar
+    df_print: paged                # Mostrar los dataframes en páginas
+    number_sections: true          # Numeración de contenidos
+    theme: united               # Tema
+    runtime: shiny
+---
+
+# Librerías
+
+```{r librerias, message = FALSE, warning = FALSE}
+
+library(readr) # Lectura de archivos CSV (base de datos)
+library(shiny) # Creación aplicación Shiny
+library(ggplot2) # Gráficos estáticos
+library(plotly) # Para pasar nuestros gráficos de estáticos a interactivos
+library(tidyr) #mutate, select etc.
+library(dplyr) # Para hacer pipe etc.
+library(wordcloud2) # Wordcloud
+library(htmlwidgets) #html
+```
+
+# Bases de datos
+
+```{r base de datos, message = FALSE, warning = FALSE}
+# Cargar bases de datos y hacer transformaciones necesarias
+base_original = readr::read_csv("base.de.datos.sin.registros.duplicados_16_septiembre_2024.csv", show_col_types = FALSE) 
+
+base_original = base_original %>% 
+  mutate(ID = row_number())
+```
+
+## db_ambos: género, edad y estado
+
+```{r db_ambos, message = FALSE, warning = FALSE}
+db_descriptiva = data.frame("ID" = base_original$ID, "Sexo.femenino" = base_original$sex___1, "Sexo.masculino" = base_original$sex___2, "Edad" = base_original$calculated_age, "Grupo.edad" = base_original$age_group, "Lugar.nacimiento" = base_original$place_of_birth, "Nivel.Socioeconómico" = base_original$socioeconomic_status, "Lupus" = base_original$lupus)
+
+
+
+db_ambos = db_descriptiva %>% 
+  mutate(Sexo = case_when( # como un ifelse pero mejor 
+    Sexo.masculino == 1 ~ "Hombre", # si sexmasc es igual a 1 cambia el valor a "Hombre"
+    Sexo.femenino == 1 ~ "Mujer", # lo mismo pero para "Mujer"
+    TRUE ~ NA_character_  # Maneja los casos donde la respuesta sea 0 o NA (Si hay un caso que no quede en ninguna condición, asigna NA (para carácteres) pq despues eliminamos todos los NA
+  )) %>% 
+  select(-Sexo.masculino & -Sexo.femenino) %>% # borra las columnas previas ya q juntamos las respuestas en una sola columna ahora y está más fácil
+  mutate(Edad = ifelse(Edad > 100 | Edad < 1, NA, Edad)) %>% # cambia las edades imposibles a NA
+    filter(complete.cases(.)) %>% 
+  select("ID", "Sexo", "Edad", "Grupo.edad", "Lugar.nacimiento", "Nivel.Socioeconómico", "Lupus") %>% 
+  mutate(Lugar.nacimiento = recode(Lugar.nacimiento,
+                                   '1' = "AG",
+                                   '2' = "BC",
+                                   '3' = "BCS",
+                                   '4' = "CMP",
+                                   '5' = "CHP",
+                                   '6' = "CHIH", 
+                                   '7' = "CDMX", 
+                                   '8' = "COAH",
+                                   '9' = "COL",
+                                   '10' = "DUR",
+                                   '11' = "EDOMEX",
+                                   '12' = "GTO",
+                                   '13' = "GUE",
+                                   '14' = "HID",
+                                   '15' = "JAL",
+                                   '16' = "MICH",
+                                   '17' = "MOR",
+                                   '18' = "NAY",
+                                   '19' = "NL",
+                                   'Ciudad de México' = "CDMX",
+                                   '20' = "OAX",
+                                   '21' = "PUE",
+                                   '22' = "QRO",
+                                   '23' = "QROO",
+                                   '24' = "SLP",
+                                   '25' = "SIN",
+                                   '26' = "SON",
+                                   '27' = "TAB",
+                                   '28' = "TAM",
+                                   '29' = "TLAX",
+                                   '30' = "VERA",
+                                   '31' = "YUC",
+                                   '32' = "ZAC"
+))
+```
+
+### db_ambos -\> db_fem y db_masc
+
+```{r db_generos, message = FALSE, warning = FALSE}
+db_fem = db_ambos %>% 
+  filter(Sexo == "Mujer" & Lupus == 1) %>% 
+  group_by_at("Lugar.nacimiento") %>%
+  summarise(count = n(),
+            promedio_edad = mean(Edad)) %>%
+  mutate(per = round(100 * count / sum(count), 1)) # summarise solo deja las columnas creadas con n() y count()
+
+db_masc = db_ambos %>% 
+  filter(Sexo == "Hombre" & Lupus == 1) %>% 
+  group_by_at("Lugar.nacimiento") %>%
+  summarise(count = n(),
+            promedio_edad = mean(Edad)) %>% 
+  mutate(per = round(100 * count /sum(count), 1))# summarise solo deja las columnas creadas con n() y count()
+```
+
+### db_ambos -\> db_sec (socioeconómico)
+
+```{r db_sec, message = FALSE, warning = FALSE}
+db_sec = db_ambos %>% 
+  select(ID, Sexo, Edad, Lupus, Nivel.Socioeconómico)
+```
+
+### base_original -\> db_fam (relación lupus/familia)
+
+```{r db_fam, message = FALSE, warning = FALSE}
+start = match("family_member_sle___0", names(base_original)) 
+end = match("family_member_sle___8", names(base_original)) 
+include = c("ID", "family_sle", "lupus", names(base_original)[start:end])
+
+db_fam = base_original %>%
+  select(all_of(include)) %>%
+  filter(complete.cases(.)) %>%
+  filter(lupus == 1) %>% 
+  mutate(Familiar = case_when(
+    family_member_sle___0 == 1 ~ "Papá",
+    family_member_sle___1 == 1 ~ "Mamá",
+    family_member_sle___2 == 1 ~ "Herman@",
+    family_member_sle___3 == 1 ~ "Abuel@",
+    family_member_sle___4 == 1 ~ "Ti@",
+    family_member_sle___5 == 1 ~ "Prim@",
+    family_member_sle___6 == 1 ~ "Sobrin@",
+    family_member_sle___7 == 1 ~ "Hij@",
+    family_member_sle___8 == 1 ~ "Otro",
+    TRUE ~ "Nadie" # Assign "Nadie" if no column equals 1
+  )) %>%
+  select("ID", "family_sle", "Familiar", "lupus")
+
+fam.count = db_fam %>% 
+  group_by(Familiar) %>%
+  summarise(count = n()) %>% 
+  arrange(desc(count))
+```
+
+### base_original -\> db_sledai
+
+```{r db_sledai, message = FALSE, warning = FALSE}
+include.sld <- c("ID", "age_group","place_of_birth", "lupus",  "sledai_points___conciencia", grep("^sledai_points___([1-9]|1[0-9]|2[0-5])$", names(base_original), value = TRUE))
+
+sledai_mapping <- c(
+  "sledai_points___1" = "Convulsiones",
+  "sledai_points___2" = "Psicosis",
+  "sledai_points___3" = "Síndrome Cerebro Orgánico",
+  "sledai_points___conciencia" = "Atención",
+  "sledai_points___4" = "Alteración visual",
+  "sledai_points___5" = "Alteración nervios craniales",
+  "sledai_points___6" = "Cefálea Lúpica",
+  "sledai_points___7" = "Accidente cerebral vascular",
+  "sledai_points___8" = "Vasculitis",
+  "sledai_points___9" = "Artritis",
+  "sledai_points___10" = "Miositis",
+  "sledai_points___11" = "Cilindros urinarios",
+  "sledai_points___12" = "Hematuria",
+  "sledai_points___13" = "Proteinuria",
+  "sledai_points___14" = "Piuria",
+  "sledai_points___15" = "Erupción",
+  "sledai_points___16" = "Alopecia",
+  "sledai_points___17" = "Úlcera mucosa",
+  "sledai_points___18" = "Pleuresia",
+  "sledai_points___19" = "Pericarditis",
+  "sledai_points___20" = "Hipocomplementación",
+  "sledai_points___21" = "Aumento unión ADN",
+  "sledai_points___22" = "Fiebre",
+  "sledai_points___23" = "Trombocitopenia",
+  "sledai_points___24" = "Leucopenia",
+  "sledai_points___25" = "Ninguno"
+)
+
+db_sledai = base_original %>%
+  select(all_of(include.sld)) %>%
+  filter(complete.cases(.)) %>% 
+  mutate(place_of_birth = recode(place_of_birth,
+                                   '1' = "AG",
+                                   '2' = "BC",
+                                   '3' = "BCS",
+                                   '4' = "CMP",
+                                   '5' = "CHP",
+                                   '6' = "CHIH", 
+                                   '7' = "CDMX", 
+                                   '8' = "COAH",
+                                   '9' = "COL",
+                                   '10' = "DUR",
+                                   '11' = "EDOMEX",
+                                   '12' = "GTO",
+                                   '13' = "GUE",
+                                   '14' = "HID",
+                                   '15' = "JAL",
+                                   '16' = "MICH",
+                                   '17' = "MOR",
+                                   '18' = "NAY",
+                                   '19' = "NL",
+                                   'Ciudad de México' = "CDMX",
+                                   '20' = "OAX",
+                                   '21' = "PUE",
+                                   '22' = "QRO",
+                                   '23' = "QROO",
+                                   '24' = "SLP",
+                                   '25' = "SIN",
+                                   '26' = "SON",
+                                   '27' = "TAB",
+                                   '28' = "TAM",
+                                   '29' = "TLAX",
+                                   '30' = "VERA",
+                                   '31' = "YUC",
+                                   '32' = "ZAC"
+)) %>% 
+    mutate(across(all_of(include.sld[5:30]), 
+                ~ ifelse(. == 1, sledai_mapping[cur_column()], "NA"))) %>% 
+    arrange(age_group)
+
+print(db_sledai)
+```
+
+# Definición Shiny App
+
+```{r}
+#--------------------------
+ui <- fluidPage(
+  selectInput("age", "Edad de interés", choices = unique(db_sledai$age_group), selected = '1' ),
+  selectInput("state", "Estado de interés", choices = unique(db_sledai$place_of_birth), selected = "CDMX"),
+  radioButtons("lupus", "Presencia de Lupus",
+    choiceNames = c("Presente", "No presente"),
+    choiceValues = list('1', '2')),
+  div(style = "width: 200px; height: 200px; border: 1px solid #ddd; position: relative; right: 10; top: 10;",
+      htmlOutput("wordcloud")))
+
+#--------------------------
+server <- function(input, output, session) {
+  
+  output$wordcloud = renderUI({
+    req(input$age, input$state, input$lupus)
+    
+    db_sledai.filtered <- db_sledai %>%
+    filter(age_group == input$age, place_of_birth == input$state, lupus == input$lupus) %>%
+    pivot_longer(cols = all_of(include.sld[5:30]), names_to = "variable", values_to = "word") %>%
+    filter(word != "NA") %>%
+    group_by(word) %>%
+    summarise(count = n())
+
+    cat(sprintf("Filtered Data:\n%s\n", paste(capture.output(print(db_sledai.filtered)), collapse = "\n"))) #debug tiempo real
+    
+    wordcloud2(db_sledai.filtered, size = 0.5)
+  })
+}
+#--------------------------
+shinyApp(ui, server)
+```
