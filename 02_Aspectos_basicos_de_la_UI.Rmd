@@ -1,0 +1,12 @@
+---
+title: "Conceptos básicos de la UI"
+author: "Domingo Martínez"
+date: "2023-08-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+En este scipt veremos cómo generar diversos modos para capturar datos desde la interfaz del usuario (UI).
