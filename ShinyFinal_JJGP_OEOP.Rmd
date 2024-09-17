@@ -1,0 +1,506 @@
+---
+title: "Entrega Final"
+author: "Oscar Eduardo Ortega Penagos, José de Jesús García Piña"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+En este script vamos a desarrollar una shiny app para que, el usuario seleccione alguna variable de interés, y esta se muestre en un mapa coroplético de los estados mexicanos.
+
+# Parte 1: mapa estático.
+
+En esta primera parte, haremos un mapa coroplético estático, en la que se representará alguna variable de interés. Posteriormente, en la parte reactiva, el usuario eligirá alguna varible, de entre algunas opciones, y dicha variable se mostrará en escala de color en el mapa.
+
+## Lectura de la base de datos
+
+```{r}
+library(tidyverse)
+data.base <- read_csv("bd_lupus_shiny_develop2.csv")
+```
+
+```{r}
+View(data.base)
+```
+
+
+```{r}
+strict.base <- data.base %>%
+  select(sex___1, # Sexo, 1 = mujer, 0 = hombre
+        place_of_birth,
+        lupus, # 1=tiene lupus, 2=no tiene lupus,
+        comorbidities, # Estado de nacimiento, nomenclatura numérica de acuerdo a INEGI)
+        calculated_age)
+```
+
+```{r}
+View(strict.base)
+```
+
+
+
+
+
+Se pretender graficar la incidencia de cada comorbilidad en cada estado.
+
+Los códigos de la variable "comorbidities" son:
+
+1 Diabetes mellitus
+2 Hipertensión
+3 Cáncer
+4 Enfermedad cardiovascular
+5 Osteoporosis
+6 Artritis reumatoide
+7 Esclerosis múltiple
+8 Problemas de tiroides
+9 Otra
+11 Ninguna
+
+Los códigos de los estados son:
+
+1 Aguascalientes
+2 Baja California
+3 Baja California Sur
+4 Campeche
+5 Chiapas
+6 Chihuahua
+7 Ciudad de México
+8 Coahuila
+9 Colima
+10 Durango
+11 Estado de México
+12 Guanajuato
+13 Guerrero
+14 Hidalgo
+15 Jalisco
+16 Michoacán
+17 Morelos
+18 Nayarit
+19 Nuevo León
+20 Oaxaca
+21 Puebla
+22 Querétaro
+23 Quintana Roo
+24 San Luis Potosí
+25 Sinaloa
+26 Sonora
+27 Tabasco
+28 Tamaulipas
+29 Tlaxcala
+30 Veracruz
+31 Yucatán
+32 Zacatecas
+
+
+
+```{r}
+strict.base$comorbidities <- as.factor(strict.base$comorbidities)
+```
+
+
+
+
+Reemplazaré los códigos de las comorbilidades por su nombre
+```{r, reemplazar códigos de comorbilidades por su nombre}
+library(plyr)
+cormo.base <- strict.base
+cormo.base$comorbidities<-revalue(strict.base$comorbidities,
+        c("1" = "Diabetes mellitus",
+          "2" = "Hipertensión",
+          "3" = "Cáncer",
+          "4" = "Enfermedad cardiovascular",
+          "5" = "Osteoporosis",
+          "6" = "Artritis reumatoide",
+          "7" = "Esclerosis múltiple",
+          "8" = "Problemas de tiroides",
+          "9" = "Otra",
+          "11" = "Ninguna"))
+#str(bd.oscar.jesus)
+#cormo.base <- strict.base
+```
+
+
+```{r Curamos la bd}
+library(visdat)
+vis_miss(cormo.base) # La mayor parte de NAs están en las comorbilidades
+# Vamos a eliminar los NAs
+cormo.base <- na.omit(cormo.base)
+str(cormo.base)
+# Formateamos $comorbidities como factor
+cormo.base$comorbidities<-as.factor(cormo.base$comorbidities)
+```
+
+```{r}
+View(cormo.base)
+```
+
+
+
+
+Y, de acuerdo al INEGI, las claves de los estados son diferentes, entonces, vamos a modificar las claves en la base de datos de lupus.
+
+```{r}
+library(ggplot2)
+library(ggspatial)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+require(sf)
+library(ggrepel)
+
+  
+  
+
+# Leemos los contornos de INEGI
+shape_estados <- read_sf(dsn ="/home/domingo/Documentos/Mapas_en_R/conjunto_de_datos",layer = "00ent"
+                 #         encoding = "UTF-8"
+                 #          use_iconv = TRUE
+                         )
+class(shape_estados)
+```
+
+
+```{r Modificación de las claves de estados}
+# El vector de estados de la base de datos de lupus es
+estados<-c("Aguascalientes",
+           "Baja California",
+           "Baja California Sur",
+           "Campeche",
+           "Chiapas",
+           "Chihuahua",
+           "Ciudad de México", 
+           "Coahuila",
+           "Colima",
+           "Durango", 
+           "Estado de México",
+           "Guanajuato",
+           "Guerrero",
+           "Hidalgo",
+           "Jalisco",
+           "Michoacán",
+           "Morelos",
+           "Nayarit",
+           "Nuevo León",
+           "Oaxaca",
+           "Puebla",
+           "Querétaro",
+           "Quintana Roo",
+           "San Luis Potosí",
+           "Sinaloa",
+           "Sonora",
+           "Tabasco",
+           "Tamaulipas",
+           "Tlaxcala",
+           "Veracruz",
+           "Yucatán",
+           "Zacatecas")
+Id<-c(1:32)
+claves.estados.lupus<-data.frame(Id,estados)
+# Ahora obtenemos las claves del INEGI
+claves.estados.INEGI<-data.frame(shape_estados$CVE_ENT,shape_estados$NOMGEO)
+# Ahora, acomodamos en orden alfabético los nombres de los estados en el dataframe del INEGI
+claves.estados.INEGI<-claves.estados.INEGI[order(claves.estados.INEGI$shape_estados.NOMGEO),]
+# Ahora integro ambas bases de datos
+claves.INEGI_y_Lupus<-cbind(claves.estados.INEGI,
+      claves.estados.lupus)
+```
+
+```{r}
+View(claves.estados.lupus)
+```
+
+
+
+
+```{r}
+order.state.base <- cormo.base
+order.state.base$place_of_birth <-as.numeric(order.state.base$place_of_birth)
+order.state.base <- order.state.base[order(order.state.base$place_of_birth),]
+```
+
+```{r}
+View(order.state.base)
+```
+
+
+
+
+```{r}
+sta.name.base <- order.state.base
+```
+
+
+
+```{r}
+# Carga la biblioteca 
+library(dplyr)
+
+# Define un diccionario de reemplazo
+replacements <- c( "1"="Aguascalientes",
+           "2"="Baja California",
+           "3"="Baja California Sur",
+           "4"="Campeche",
+           "5"="Chiapas",
+           "6"="Chihuahua",
+           "7"="Ciudad de México", 
+           "8"="Coahuila",
+           "9"="Colima",
+           "10"="Durango", 
+           "11"="Estado de México",
+           "12"="Guanajuato",
+           "13"="Guerrero",
+           "14"="Hidalgo",
+           "15"="Jalisco",
+           "16"="Michoacán",
+           "17"="Morelos",
+           "18"="Nayarit",
+           "19"="Nuevo León",
+           "20"="Oaxaca",
+           "21"="Puebla",
+           "22"="Querétaro",
+           "23"="Quintana Roo",
+           "24"="San Luis Potosí",
+           "25"="Sinaloa",
+           "26"="Sonora",
+           "27"="Tabasco",
+           "28"="Tamaulipas",
+           "29"="Tlaxcala",
+           "30"="Veracruz",
+           "31"="Yucatán",
+           "32"="Zacatecas")
+
+# Reemplaza los nombres en la columna place_of_birth
+sta.name.base$place_of_birth <- ifelse(sta.name.base$place_of_birth %in% names(replacements), replacements[sta.name.base$place_of_birth], sta.name.base$place_of_birth)
+
+# Revisamos la estructura
+sta.name.base$place_of_birth <- as.factor(sta.name.base$place_of_birth)
+
+```
+
+```{r}
+View(sta.name.base)
+```
+
+
+```{r Librerías para correr nuestra Shiny}
+library(shiny)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(rcartocolor)
+library(caret)
+library(shinythemes)
+library(bslib)   
+# Crear temas para shiny app, Manual https://github.com/rstudio/bslib/
+library(plotly)       # Graficas interactivas
+library(bsicons)      # Temas decorativos para shiny app
+library(fresh)
+
+```
+
+
+```{r}
+# Define la interfaz de usuario (UI)
+ui <- fluidPage(theme = bs_theme(version = 4, bootswatch = "cyborg",bg = "#060606",fg = "#E5F3EC",primary = "#A99A88", base_font = "Serif", code_font = "SFMono_regular", heading_font = "Cursiva"),
+                
+  titlePanel(HTML("<h4 style='font-size: 14px;'>Autores: García Piña José de Jesus, Ortega Penagos Oscar Eduardo</h4>")),
+  
+    sidebarPanel(
+      headerPanel(HTML("<h4 style='font-size: 20px;'>Lupus en México: Análisis de Comorbilidades y Distribución Geográfica</h4>")), #titulo del panel
+      br(),
+  #agregamos el parrafo de bienvenida al usuario
+      p("Bienvenido a la app interactiva Sintom Mapeo, donde encontrarás información geografica acerca de la relación entre el Lupus y otras sintomatologías, donde podras visualizar un mapa con informacion de que estados de la Nacion Mexicana presentan mayores casos de cada sintoma"),
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Introducción",  # <--- Emplear el previsualizador
+              headerPanel(strong("Bienvenido")), #titulo del panel
+  br(),
+  #agregamos el parrafo de bienvenida al usuario
+  p("Ingrese sus datos"),
+  
+  #datos del usuario
+  textInput("nombre", "Ingrese su nombre y apellido"),
+  selectInput("sexo", "Ingresa tu sexo", choices = list("femenino", "masculino")),
+  dateInput("num", "Ingresa tu fecha de nacimiento", value = "2023-12-03"),
+  selectInput("lupus", "¿Fue diagnosticado con lupus?", choices = list("Si", "No")),
+  br(), #salto de linea
+  downloadButton("Guardar datos")),
+  
+        #pestañas de interfaz 1 para mapeo
+        tabPanel("Map", 
+          fluidRow( 
+            column(2,
+              offset = 0.5,
+              radioButtons(inputId = "comorbilidades2",
+                label = "Comorbilidades en lupus",
+                choices = unique(sta.name.base$comorbidities)),
+              sliderInput(inputId = "rango_edades",
+                label = "Seleccionar Rango de Edades",
+                min = 1,
+                max = 60,
+                value = c(1, 60),
+                step = 1),
+            ),
+            column(9,
+              offset = 0.5,
+              plotOutput(outputId = "Mapa01",
+                width = "130%",
+                height = "400px"))
+          )
+        ),   
+  
+        #pestañas de interfaz 2 para graficos
+        tabPanel("Graficas de porcentaje", 
+          # Colocar aquí el código del segundo UI
+          sidebarLayout(
+            sidebarPanel(
+              radioButtons("estado", "Selecciona un estado:",
+                choices = unique(sta.name.base$place_of_birth),
+                selected = unique(sta.name.base$place_of_birth)[1])
+            ),
+            mainPanel(
+              plotOutput("barplot")
+            )
+          )
+        )
+      )
+    )
+  )
+
+
+
+server <- function(input, output, session) {
+  
+  comorbilidad<-reactive(input$comorbilidades2)
+  output$Mapa01<-renderPlot({
+    #
+    library(dplyr)
+    # Filtramos Artritris Reumatoide
+    conteo.casos.por.estado<-cormo.base %>%
+      filter(comorbidities==comorbilidad())%>%
+      select(place_of_birth) %>%
+      table()
+    conteo.casos.por.estado<-as.data.frame(conteo.casos.por.estado)
+    # Ahora tengo que poner en ceros aquellos estados que no tienen caso alguno
+    estados.sin.casos<-(1:32)%in%conteo.casos.por.estado$place_of_birth
+    estados.sin.casos<-estados.sin.casos*1
+    which(estados.sin.casos==0)
+    estados.sin.casos<-data.frame(place_of_birth=which(estados.sin.casos==0), Freq=rep(0,length(which(estados.sin.casos==0))))
+    estados.sin.casos$place_of_birth<-as.factor(estados.sin.casos$place_of_birth)
+    resultados.generales.por.estado<-rbind(conteo.casos.por.estado,estados.sin.casos)
+    resultados.generales.por.estado$place_of_birth<-as.numeric(resultados.generales.por.estado$place_of_birth)
+    resultados.generales.por.estado<-resultados.generales.por.estado[order(resultados.generales.por.estado$place_of_birth),]
+    #View(resultados.generales.por.estado)
+    # Aquí hacemos el mapa
+    library(ggplot2)
+    library(ggspatial)
+    library(sf)
+    library(rnaturalearth)
+    library(rnaturalearthdata)
+    require(sf)
+    library(ggrepel)
+    # Leemos los contornos de INEGI
+    shape_estados <- read_sf(dsn ="/home/domingo/Documentos/Mapas_en_R/conjunto_de_datos",
+                             layer = "00ent"
+                     #         encoding = "UTF-8"
+                     #          use_iconv = TRUE
+                             )
+    class(shape_estados)
+    
+    # Agregamos el conteo de la comorbilidad a shape_estados
+    shape_estados$Ranking <- resultados.generales.por.estado$Freq
+    
+    # También agregamos el lugar de nacimiento par ver que coinicida con la clave del estado
+    shape_estados$Lugar.nacimiento <- resultados.generales.por.estado$place_of_birth
+    
+    # Calculamos las coordenadas de los centroides de cada contorno
+    coordenadas.centroides.estados<-st_coordinates(st_centroid(shape_estados$geometry))
+    
+    # Integramos las coordendas al shape_estados
+    shape_estados<-cbind(shape_estados, coordenadas.centroides.estados)
+    
+    # Graficamos los contornos
+    Mapa01<-ggplot(data = shape_estados) +
+        geom_sf(aes(fill=Ranking)) +
+      xlab("Longitud")+
+      ylab("Latitud")+
+      ggtitle("Distribución geográfica /nde comorbilidades del lupus en México")+
+      guides(fill=guide_legend(title = "Prevalencia /npor estado"))+
+      scale_fill_viridis_c(alpha = 0.7,
+                           direction = 1,
+                           option = "plasma") +
+      theme_bw() +
+      annotation_scale(location = "bl", width_hint = 0.5) +
+      annotation_north_arrow(location = "bl", 
+                             which_north = "true", 
+                             pad_x = unit(15, "cm"), 
+                             pad_y = unit(9, "cm"), 
+                             style = north_arrow_fancy_orienteering)+
+      geom_label_repel(data = shape_estados, 
+                aes(x = X, y = Y, 
+                    label=NOMGEO),
+                nudge_x = 0, 
+                nudge_y = 0,
+                size = 2.6,
+                label.padding = 0.2,
+                force = 0.2,
+                color = "gray20",
+                max.overlaps = 30,
+                max.iter = 10000000,
+                max.time = 3) +
+      theme(panel.background = element_rect(fill = "aliceblue"),
+            panel.grid.major = element_line(color = "gray50", 
+                                            linetype = "dashed", 
+                                            size = 0.1))
+    # # #
+    plot(Mapa01)
+  })
+  
+  ############# Función para crear el gráfico de barras
+  output$barplot <- renderPlot({
+    selected_estado <- input$estado
+    filtered_data <- sta.name.base %>% filter(place_of_birth == selected_estado)
+    
+    # Calcular porcentajes
+    cross_table <- table(filtered_data$comorbidities)
+    percentages <- prop.table(cross_table) * 100
+    
+    # Crear el gráfico de barras
+    ggplot(data = data.frame(comorbidity = names(percentages), percentages = percentages),
+           aes(x = comorbidity, y = percentages, fill = comorbidity)) +
+      geom_bar(stat = "identity") +
+      labs(title = paste("Porcentaje de Comorbilidades en", selected_estado,",","\n(Los estados que no aparecen en la grafica es porque no presentan casos de lupus)"),
+           x = "Comorbilidad",
+           y = "Porcentaje") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Ajuste para nombres verticales
+  
+  })
+  
+  bs_themer() #visualizador de temas 
+}
+# Ejecutar la aplicación Shiny
+shinyApp(ui, server)
+
+```
+
+
+
+Referencias para controlar acomodo de las salidas y entradas en la interfaz.
+<https://shiny.posit.co/r/articles/build/layout-guide/>
+
+
+
+
+
+
+
+
+
+
