@@ -1,0 +1,365 @@
+---
+title: "LupusShiny"
+author: "Antonio Zamora Hernandez"
+date: "2023-12-03"
+output: html_document
+---
+# Librerías y Cosas Previas
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r WD}
+#Establecemos nuestro directorio de trabajo
+# setwd("C:/Users/anton/OneDrive/Documents/Estancia7/Proyecto")
+getwd()
+```
+
+```{r librerias}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(rcartocolor)
+library(caret)
+library(shiny)
+library(shinythemes)
+library(bslib)        # Crea tus propios temas para shiny app, Manual https://github.com/rstudio/bslib/
+library(plotly)       # Graficas interactivas
+library(bsicons)      # Temas decorativos para shiny app
+library(fresh)        # Temas decorativos para shiny app
+library(wordcloud2)
+library(DT)
+library(viridis)
+
+```
+
+# Base de Datos
+
+```{r Variables}
+library(tidyverse)
+Rawdb <- read.csv('bd_lupus_shiny_develop_1.1.csv') 
+
+# Sex
+Lupusdb <- Rawdb[c('sex___1', 'sex___2')]
+
+# Age
+Lupusdb <- cbind(Lupusdb,Rawdb[c('calculated_age')])
+
+# Age Group
+Lupusdb <- cbind(Lupusdb,Rawdb[c('age_group')])
+
+# Lupus
+Lupusdb <- cbind(Lupusdb,Rawdb[c('lupus')])
+
+# Height, Weight, BMI
+Lupusdb <- cbind(Lupusdb,Rawdb[c('height', 'weight', 'bmi')])
+Lupusdb[ , 'IMC factor'] <- NA
+
+# Quality of Life & Sleep
+Lupusdb <- cbind(Lupusdb,Rawdb[c('cal_totalcv', 'cal_glob')])
+
+# Comorbidities
+Lupusdb <- cbind(Lupusdb,Rawdb[c('comorbidities')])
+
+rm(Rawdb)
+```
+
+```{r Acondicionamiento de DF}
+#Reducimos "Sexo" a una columna
+Lupusdb$sex___1 <- factor(case_when(
+  Lupusdb$sex___1 == 1 ~ "Femenino",
+  Lupusdb$sex___1 == 0 ~ "Masculino",
+  TRUE ~ as.factor(Lupusdb$sex___1)
+))
+Lupusdb <- select(Lupusdb, -'sex___2')
+Lupusdb <- Lupusdb %>%rename_at('sex___1', ~'Sexo')
+
+# Edad
+# Eliminamos personas mayores a 100 años
+Lupusdb <- Lupusdb %>%
+                  mutate(calculated_age = ifelse(calculated_age >= 101, NaN, calculated_age))%>%
+                  rename_at('calculated_age', ~'Edad')
+
+#Hacemos usable grupo de edad
+Lupusdb$age_group <- factor(case_when(
+  Lupusdb$age_group == 1 ~ "18 a 25",
+  Lupusdb$age_group == 2 ~ "26 a 31",
+  Lupusdb$age_group == 3 ~ "32 a 45",
+  Lupusdb$age_group == 4 ~ "46 a 50",
+  Lupusdb$age_group == 5 ~ "51 a 60",
+  Lupusdb$age_group == 6 ~ "60 o más",
+  TRUE ~ as.factor(Lupusdb$age_group)
+))
+Lupusdb <- Lupusdb %>%rename_at('age_group', ~'GrupoEdad')
+Lupusdb$GrupoEdad <- as.factor(Lupusdb$GrupoEdad)
+
+#Cambiamos "No tiene lupus" a 0 y "Tiene Lupus" a 1
+Lupusdb <- Lupusdb %>% rename_at('lupus', ~'Lupus')
+Lupusdb$Lupus <- as.factor(((Lupusdb$Lupus)-2)^2)
+
+#Altura, Peso, IMC
+Lupusdb <- Lupusdb %>% rename_at('height', ~'Altura')
+Lupusdb <- Lupusdb %>% rename_at('weight', ~'Peso')
+Lupusdb <- Lupusdb %>% rename_at('bmi', ~'IMC')
+
+# Convert "IMC" to a factor with specified levels
+breakos <- c(-Inf, 18, 24, 29, 39, Inf)
+labelos<- c("Bajo Peso", "Peso Normal", "Exceso de Peso", "Obesidad", "Obesidad Extrema")
+Lupusdb$classification <- cut(Lupusdb$IMC, breaks = breakos, labels = labelos)
+Lupusdb$`IMC factor` <- ifelse(is.na(Lupusdb$`IMC factor`), Lupusdb$classification, Lupusdb$`IMC factor`)
+Lupusdb <- select(Lupusdb, -'IMC factor')
+Lupusdb <- Lupusdb %>% rename_at('classification', ~'IMC factor')
+rm(breakos, labelos)
+
+
+#Calidad Vida normalizamos a 100 (originalmente de 0 a 80)
+Lupusdb$cal_totalcv <- round(Lupusdb$cal_totalcv /8*10, digits=4)
+Lupusdb <- Lupusdb %>% rename_at('cal_totalcv', ~'CalidadVida')
+
+#Indice de Calidad de Sueño de Pittsburgh
+#Ajustamos Indice de Calidad Sueño Pittsburgo a valores menores o iguales a 21
+Lupusdb <- Lupusdb %>%
+                  mutate(cal_glob = ifelse(cal_glob >= 22, NaN, cal_glob))%>%
+                  rename_at('cal_glob', ~'Sueno')
+
+#Hacemos usable Comorbilidades
+Lupusdb <- Lupusdb %>%
+                  mutate(comorbidities = ifelse(comorbidities == 1, "Diabetes",
+                                     ifelse(comorbidities == 2, "Hipertension",
+                                     ifelse(comorbidities == 3, "Cancer",
+                                     ifelse(comorbidities == 4, "Cardiovascular",
+                                     ifelse(comorbidities == 5, "Osteoporosis",
+                                     ifelse(comorbidities == 6, "Artritis",
+                                     ifelse(comorbidities == 7, "Esclerosis",
+                                     ifelse(comorbidities == 8, "Tiroides",
+                                     ifelse(comorbidities == 9, "Otra",
+                                     ifelse(comorbidities == 11, "Ninguna", comorbidities)))))))))))%>%
+                  rename_at('comorbidities', ~'Comorbilidades')
+Lupusdb$Comorbilidades <- as.factor(Lupusdb$Comorbilidades)
+
+```
+
+```{r}
+str(Lupusdb)
+```
+
+#Funciones útiles para Shiny App
+
+```{r Grupo de Edad}
+classify_age_group <- function(age) {
+  ifelse(age >= 18 & age <= 25, "18 a 25",
+         ifelse(age >= 26 & age <= 31, "26 a 31",
+                ifelse(age >= 32 & age <= 45, "32 a 45",
+                       ifelse(age >= 46 & age <= 50, "46 a 50",
+                              ifelse(age >= 51 & age <= 60, "51 a 60",
+                                     "60 o más")))))
+}
+```
+
+
+
+#Shiny App
+
+```{r UI}
+#UI
+ui <- fluidPage(
+  navbarPage("Lupus: Otros Como Tú",
+             theme = shinytheme("flatly"),
+             tabPanel("App",
+                      sidebarLayout(
+                        sidebarPanel(
+                          h3("Ingrese los datos de interés:"),
+                          radioButtons(inputId = "lupus", label = "Lupus", choices = c("Sí", "No"), selected = "Sí"),
+                          selectInput(inputId = "sex", label = "Sexo", choices = levels(Lupusdb$Sexo)),
+                          sliderInput(inputId = "edad", label = "Edad", value = 25, min = 18, max = 80),
+                          sliderInput(inputId = "altura", label = "Altura [cm]", value = 160, min = 130, max = 200),
+                          sliderInput(inputId = "peso", label = "Peso [kg]", value = 50, min = 35, max = 150)
+                        ),
+                        mainPanel(
+                          tabsetPanel(
+                            id = "tabset",
+                            tabPanel("Gráficos",
+                                     fluidRow(
+                                       column(6, plotOutput("calidadvida_boxplot")),
+                                       column(6, plotOutput("density_plot_sueno"))),
+                                     fluidRow(
+                                       column(6, plotOutput("bmi_scatter_plot")),
+                                       column(6, plotOutput("comorbilidades_histogram")))
+                            ),
+                            
+                            tabPanel("Datos Actuales",
+                                     verbatimTextOutput("output_1"),  # Display output_1 above the table
+                                     DTOutput("filtered_data_table")  # Updated line to use DTOutput
+                            ),
+                            
+                            # Top-right note
+                            tags$div(
+                              style = "position: absolute; top: 10px; right: 10px; text-align: right; color: #777;",
+                              "Autor: Antonio ZH, antoniozamorahdz10@gmail.com"
+                            )
+                          )
+                        )
+                      )
+             ),
+             tabPanel("Info", uiOutput("info_text"))
+  )
+)
+
+
+```
+
+```{r Server}
+# Server
+server <- function(input, output) {
+  # Define a reactive expression for filtered data
+  filtered_data <- reactive({
+    result <- Lupusdb %>%
+      filter(Sexo == input$sex) %>%
+      filter(GrupoEdad == classify_age_group(input$edad))
+
+    if (input$lupus == 'No') {
+      result <- result %>% filter(Lupus == 0)
+    } else if (input$lupus == 'Sí') {
+      result <- result %>% filter(Lupus == 1)
+    }
+
+    return(result)
+  })
+
+  # Confirmación de Datos
+  output$output_1 <- renderText({
+    lupus_status <- ifelse(input$lupus == "Sí", "Tiene", "No tiene")
+    age_group <- classify_age_group(input$edad)
+
+    paste("El paciente", input$sex, "de", input$edad, "años,",
+          "con una altura de", input$altura, "cm, y un peso de", input$peso, "kg.",
+          lupus_status, "Lupus.",
+          "\nEl paciente forma parte del grupo de edad:", age_group,
+          "\nEl paciente tiene un Índice de Masa Corporal de:", round(input$peso / (input$altura/100 * input$altura/100)))
+  })
+
+  # Render your boxplot using the reactive expression
+  output$calidadvida_boxplot <- renderPlot({
+    # Use filtered_data() to create the boxplot with dots
+    ggplot(filtered_data(), aes(x = GrupoEdad, y = CalidadVida)) +
+      geom_boxplot(fill = "skyblue", color = "black", na.rm = TRUE) +
+      geom_dotplot(aes(fill = "dodgerblue4"), binaxis = "y", stackdir = "center", dotsize = 0.5, na.rm = TRUE) +
+      labs(title = "Calidad de Vida",  # Updated title
+           x = "Grupo de Edad",
+           y = "Calidad de Vida",
+           caption = "Calidad de vida en personas del grupo de edad ingresado.") +
+      scale_fill_identity() +
+      theme_minimal()
+  })
+
+  # Render your density plot for "Sueno" with the same aspect ratio
+  output$density_plot_sueno <- renderPlot({
+    ggplot(filtered_data(), aes(x = Sueno, fill = "lightsalmon")) +
+      geom_density(alpha = 0.7) +
+      labs(title = "Calidad del Sueño",  # Updated title
+           x = "Sueno",
+           y = "Density",
+           caption = "Índice de Calidad del Sueño de Pittsburgh") +
+      scale_fill_identity() +
+      theme_minimal() +
+      theme(
+        plot.background = element_rect(fill = "white", color = "white"),  # Set background color and remove frame
+        panel.background = element_rect(fill = "white", color = "white")   # Set panel background color and remove frame
+      )
+  })
+
+  # Render scatter plot for "BMI"
+  output$bmi_scatter_plot <- renderPlot({
+    # Use filtered_data() to create the scatter plot with colored points
+    ggplot(filtered_data(), aes(x = Peso, y = Altura, color = `IMC factor`)) +
+      geom_point(size = 3) +
+      geom_point(
+        aes(x = input$peso, y = (input$altura)/100, color = cut(round(input$peso / (input$altura / 100 * input$altura / 100)),
+                                                          breaks = c(-Inf, 18, 24, 29, 39, Inf),
+                                                          labels = c("Bajo Peso", "Peso Normal", "Exceso de Peso", "Obesidad", "Obesidad Extrema"),
+                                                          include.lowest = TRUE)),
+        shape = 17,
+        size = 5
+      ) +  # Add triangle point
+      scale_color_manual(
+        values = c(
+          "dodgerblue4",  # Under 18
+          "palegreen3",   # 19 to 24
+          "yellow2",      # 25 to 29
+          "lightsalmon",  # 30 to 39
+          "orangered3"    # Above 40
+        ),
+        breaks = c("Bajo Peso", "Peso Normal", "Exceso de Peso", "Obesidad", "Obesidad Extrema"),
+        labels = c("Bajo Peso", "Peso Normal", "Exceso de Peso", "Obesidad", "Obesidad Extrema")
+      ) +
+      labs(
+        title = "Índice de Masa Corporal",  # Updated title
+        x = "Peso",
+        y = "Altura",
+        color = "IMC",
+        caption = "Índice de masa corporal en personas del grupo de edad ingresado."
+      ) +
+      theme_minimal()
+  })
+
+  # Render histogram for "Comorbilidades"
+  output$comorbilidades_histogram <- renderPlot({
+    comorbidity_counts <- filtered_data() %>%
+      filter(!is.na(Comorbilidades)) %>%
+      group_by(Comorbilidades) %>%
+      summarise(count = n()) %>%
+      arrange(desc(count))
+
+    ggplot(comorbidity_counts, aes(x = reorder(Comorbilidades, -count), y = count, fill = Comorbilidades)) +
+      geom_bar(stat = "identity") +
+      labs(title = "Comorbilidades Más Comunes",  # Updated title
+           x = "Comorbilidades",
+           y = "Frecuencia",
+           caption = "En caso de no poder observar, significa que los datos son escasos.") +
+      scale_fill_manual(values = c(
+        "Diabetes" = "lightskyblue",
+        "Hipertension" = "thistle",
+        "Cancer" = "burlywood",
+        "Cardiovascular" = "darkolivegreen1",
+        "Osteoporosis" = "wheat3",
+        "Artritis" = "pink",
+        "Esclerosis" = "lightsalmon",
+        "Tiroides" = "seashell2",
+        "Otra" = "palegreen3",
+        "Ninguna" = "yellow2"
+      )) +
+      theme_minimal()
+  })
+
+  # Render an interactive DataTable for "Datos Actuales"
+  output$filtered_data_table <- renderDT({
+    datatable(filtered_data(), options = list(pageLength = 10))  # You can customize options as needed
+  })
+
+  # Render the informational text for "Info" tab
+output$info_text <- renderUI({
+  tags$div(
+    HTML("Esta shiny App fue como parte de un curso universitario."),
+    tags$br(),
+    tags$br(),
+    HTML("Se utilizó la base de datos del Registro Mexicano de Lupus (https://lupusrgmx.liigh.unam.mx/). Entre las cientos de variables que se pueden encontrar dentro de la base de datos, se optó por usar cuatro de interés:"),
+    tags$ul(
+      tags$li("Calidad de Vida: Es una medición que fue realizada tomando en cuenta factores como salud física, psicológica, la calidad de relaciones sociales que tiene la persona, y cómo se siente con el ambiente que lo rodea."),
+      tags$li("Calidad del Sueño: Este inventario tiene como objetivo evaluar la calidad del sueño, tomando en cuenta el mes previo a su aplicación. El puntaje total oscila entre los 0 y los 21 puntos, dónde: una puntuación menor a 5 puntos indica que no se presentan problemas de sueño, 5 a 7 puntos indican que podría requerirse atención médica, 8 a 14 puntos indican que podría necesitarse atención y tratamiento médico; y una puntuación igual o mayor a 15 puntos indica que puede tratarse de un problema de sueño grave."),
+      tags$li("Índice de Masa Corporal: Si bien no es una forma final de determinar la salud de un ser, es una buena herramienta como primer acercamiento a la salud de la persona y otros problemas que se pueden dar."),
+      tags$li("Comorbilidades Más Comunes: Aquí conocemos qué otras enfermedades sufren las personas.")
+    )
+  )
+})
+
+
+  
+}
+
+```
+
+```{r Shiny}
+shinyApp(ui = ui, server = server)
+```
+
